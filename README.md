@@ -1,12 +1,12 @@
 # Motion Occupancy Time (Home Assistant Custom Integration)
 
-This repository provides a Home Assistant custom integration that adds a total occupancy-time sensor to each existing motion `binary_sensor`.
+This repository provides a Home Assistant custom integration that adds occupancy duration and activation count sensors to each existing motion `binary_sensor`.
 
 ## Features
 
-- Creates a new sensor entity for every `binary_sensor` with `device_class: motion`.
+- Creates new sensor entities for every `binary_sensor` with `device_class: motion` or `occupancy`.
 - Attaches the new sensor to the same device as the original motion entity.
-- Persists the total occupied time across restarts.
+- Persists the total occupied time and activation counts across restarts.
 - No MQTT required; everything runs directly inside Home Assistant.
 
 ## Installation (HACS)
@@ -18,10 +18,11 @@ This repository provides a Home Assistant custom integration that adds a total o
 
 ## Resulting entity
 
-Each motion sensor gets an additional entity named:
+Each motion sensor gets additional entities named:
 
 ```
 <Motion Sensor Friendly Name> Occupancy Total
+<Motion Sensor Friendly Name> Occupancy Count
 ```
 
-The sensor reports the total occupied time in seconds and exposes the last active timestamp in its attributes.
+The total sensor reports the occupied time in seconds. The count sensor reports how many times the motion entity switched to `on`. Both sensors expose attributes such as the current occupancy duration, last trigger timestamp, and source entity ID.

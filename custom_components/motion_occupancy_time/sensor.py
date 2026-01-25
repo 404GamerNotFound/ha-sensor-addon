@@ -28,7 +28,10 @@ from .const import (
 @dataclass
 class OccupancyState:
     total_seconds: float = 0.0
-    last_on: datetime | None = None
+    total_activations: int = 0
+    on_since: datetime | None = None
+    last_updated: datetime | None = None
+    last_triggered: datetime | None = None
 
 
 class MotionOccupancyStore:
@@ -45,12 +48,21 @@ class MotionOccupancyStore:
         if not data:
             return
         for entity_id, state in data.get("states", {}).items():
-            last_on = None
-            if state.get("last_on"):
-                last_on = dt_util.parse_datetime(state["last_on"])
+            on_since = None
+            if state.get("on_since"):
+                on_since = dt_util.parse_datetime(state["on_since"])
+            last_updated = None
+            if state.get("last_updated"):
+                last_updated = dt_util.parse_datetime(state["last_updated"])
+            last_triggered = None
+            if state.get("last_triggered"):
+                last_triggered = dt_util.parse_datetime(state["last_triggered"])
             self._states[entity_id] = OccupancyState(
                 total_seconds=float(state.get("total_seconds", 0.0)),
-                last_on=last_on,
+                total_activations=int(state.get("total_activations", 0)),
+                on_since=on_since,
+                last_updated=last_updated,
+                last_triggered=last_triggered,
             )
 
     @callback
@@ -62,7 +74,14 @@ class MotionOccupancyStore:
             "states": {
                 entity_id: {
                     "total_seconds": state.total_seconds,
-                    "last_on": state.last_on.isoformat() if state.last_on else None,
+                    "total_activations": state.total_activations,
+                    "on_since": state.on_since.isoformat() if state.on_since else None,
+                    "last_updated": state.last_updated.isoformat()
+                    if state.last_updated
+                    else None,
+                    "last_triggered": state.last_triggered.isoformat()
+                    if state.last_triggered
+                    else None,
                 }
                 for entity_id, state in self._states.items()
             }
@@ -78,7 +97,8 @@ class MotionOccupancyManager:
         self.hass = hass
         self._async_add_entities = async_add_entities
         self._store = MotionOccupancyStore(hass)
-        self._entities: dict[str, MotionOccupancySensor] = {}
+        self._entities: dict[str, MotionOccupancyBaseSensor] = {}
+        self._source_entity_ids: set[str] = set()
         self._tracked_entity_ids: set[str] = set()
         self._unsub_state = None
         self._unsub_interval = None
@@ -110,21 +130,30 @@ class MotionOccupancyManager:
             for state in self.hass.states.async_all("binary_sensor")
             if state.attributes.get("device_class") in SUPPORTED_DEVICE_CLASSES
         ]
-        new_entities: list[MotionOccupancySensor] = []
+        new_entities: list[MotionOccupancyBaseSensor] = []
+        source_entity_ids: set[str] = set()
         for state in motion_states:
             entity_id = state.entity_id
+            source_entity_ids.add(entity_id)
             if entity_id not in self._entities:
                 device_info = self._device_info_for_entity(
                     entity_registry, device_registry, entity_id, state
                 )
-                sensor = MotionOccupancySensor(entity_id, state, self._store, device_info)
-                self._entities[entity_id] = sensor
-                new_entities.append(sensor)
+                total_sensor = MotionOccupancyTotalSensor(
+                    entity_id, state, self._store, device_info
+                )
+                count_sensor = MotionOccupancyCountSensor(
+                    entity_id, state, self._store, device_info
+                )
+                self._entities[entity_id] = total_sensor
+                self._entities[f"{entity_id}_count"] = count_sensor
+                new_entities.extend([total_sensor, count_sensor])
             self._sync_state(entity_id, state)
         if new_entities:
             self._async_add_entities(new_entities)
         self._store.async_schedule_save()
-        self._update_state_listener(set(self._entities))
+        self._source_entity_ids = source_entity_ids
+        self._update_state_listener(self._source_entity_ids)
 
     @staticmethod
     def _device_info_for_entity(
@@ -162,7 +191,7 @@ class MotionOccupancyManager:
 
     @callback
     def _setup_state_listener(self) -> None:
-        self._update_state_listener(self._tracked_entity_ids)
+        self._update_state_listener(self._source_entity_ids)
 
     @callback
     def _handle_state_change(self, event) -> None:
@@ -177,15 +206,25 @@ class MotionOccupancyManager:
         state = self._store.states.setdefault(entity_id, OccupancyState())
         now = dt_util.utcnow()
         if new_state.state == "on":
-            if state.last_on is None:
-                state.last_on = now
+            if state.on_since is None:
+                state.on_since = now
+                state.last_updated = now
+                state.total_activations += 1
+                state.last_triggered = now
+            else:
+                last_updated = state.last_updated or state.on_since
+                state.total_seconds += (now - last_updated).total_seconds()
+                state.last_updated = now
         elif new_state.state == "off":
-            if state.last_on is not None:
-                state.total_seconds += (now - state.last_on).total_seconds()
-                state.last_on = None
-        entity = self._entities.get(entity_id)
-        if entity:
-            entity.async_write_ha_state()
+            if state.on_since is not None:
+                last_updated = state.last_updated or state.on_since
+                state.total_seconds += (now - last_updated).total_seconds()
+                state.on_since = None
+                state.last_updated = None
+        for key in (entity_id, f"{entity_id}_count"):
+            entity = self._entities.get(key)
+            if entity:
+                entity.async_write_ha_state()
 
 
 async def async_setup_entry(
@@ -204,7 +243,50 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
         await manager.async_unload()
 
 
-class MotionOccupancySensor(SensorEntity):
+class MotionOccupancyBaseSensor(SensorEntity):
+    def __init__(
+        self,
+        source_entity_id: str,
+        source_state: State,
+        store: MotionOccupancyStore,
+        device_info: DeviceInfo,
+        unique_suffix: str,
+        name_suffix: str,
+    ) -> None:
+        self._source_entity_id = source_entity_id
+        self._source_name = source_state.attributes.get("friendly_name", source_entity_id)
+        self._store = store
+        self._attr_unique_id = f"{source_entity_id}_{unique_suffix}"
+        self._attr_name = f"{self._source_name} {name_suffix}"
+        self._attr_device_info = device_info
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        state = self._store.states.get(self._source_entity_id)
+        if not state:
+            return {}
+        current_duration = None
+        if state.on_since:
+            current_duration = round(
+                (dt_util.utcnow() - state.on_since).total_seconds(), 2
+            )
+        return {
+            "current_occupancy_seconds": current_duration,
+            "last_triggered": state.last_triggered.isoformat()
+            if state.last_triggered
+            else None,
+            "on_since": state.on_since.isoformat() if state.on_since else None,
+            "source_entity_id": self._source_entity_id,
+            "source_name": self._source_name,
+            "total_activations": state.total_activations,
+        }
+
+    @property
+    def available(self) -> bool:
+        return self.hass.states.get(self._source_entity_id) is not None
+
+
+class MotionOccupancyTotalSensor(MotionOccupancyBaseSensor):
     _attr_device_class = "duration"
     _attr_native_unit_of_measurement = "s"
     _attr_state_class = "total_increasing"
@@ -216,40 +298,51 @@ class MotionOccupancySensor(SensorEntity):
         store: MotionOccupancyStore,
         device_info: DeviceInfo,
     ) -> None:
-        self._source_entity_id = source_entity_id
-        self._source_name = source_state.attributes.get("friendly_name", source_entity_id)
-        self._store = store
-        self._attr_unique_id = f"{source_entity_id}_occupancy_total"
-        self._attr_name = f"{self._source_name} Occupancy Total"
-        self._attr_device_info = device_info
+        super().__init__(
+            source_entity_id,
+            source_state,
+            store,
+            device_info,
+            "occupancy_total",
+            "Occupancy Total",
+        )
 
     @property
     def native_value(self) -> float:
         state = self._store.states.get(self._source_entity_id)
         if not state:
             return 0.0
-        if state.last_on:
-            ongoing = (dt_util.utcnow() - state.last_on).total_seconds()
+        if state.on_since:
+            last_updated = state.last_updated or state.on_since
+            ongoing = (dt_util.utcnow() - last_updated).total_seconds()
         else:
             ongoing = 0.0
         return round(state.total_seconds + ongoing, 2)
 
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        state = self._store.states.get(self._source_entity_id)
-        if not state:
-            return {}
-        current_duration = None
-        if state.last_on:
-            current_duration = round(
-                (dt_util.utcnow() - state.last_on).total_seconds(), 2
-            )
-        return {
-            "current_occupancy_seconds": current_duration,
-            "last_on": state.last_on.isoformat() if state.last_on else None,
-            "source_entity_id": self._source_entity_id,
-        }
+
+class MotionOccupancyCountSensor(MotionOccupancyBaseSensor):
+    _attr_state_class = "total_increasing"
+    _attr_native_unit_of_measurement = "events"
+
+    def __init__(
+        self,
+        source_entity_id: str,
+        source_state: State,
+        store: MotionOccupancyStore,
+        device_info: DeviceInfo,
+    ) -> None:
+        super().__init__(
+            source_entity_id,
+            source_state,
+            store,
+            device_info,
+            "occupancy_count",
+            "Occupancy Count",
+        )
 
     @property
-    def available(self) -> bool:
-        return self.hass.states.get(self._source_entity_id) is not None
+    def native_value(self) -> int:
+        state = self._store.states.get(self._source_entity_id)
+        if not state:
+            return 0
+        return state.total_activations
