@@ -15,7 +15,14 @@ from homeassistant.helpers.storage import Store
 from homeassistant.helpers.event import async_track_state_change_event, async_track_time_interval
 from homeassistant.util import dt as dt_util
 
-from .const import DOMAIN, RESCAN_INTERVAL, SAVE_DELAY, STORAGE_KEY, STORAGE_VERSION
+from .const import (
+    DOMAIN,
+    RESCAN_INTERVAL,
+    SAVE_DELAY,
+    STORAGE_KEY,
+    STORAGE_VERSION,
+    SUPPORTED_DEVICE_CLASSES,
+)
 
 
 @dataclass
@@ -101,7 +108,7 @@ class MotionOccupancyManager:
         motion_states = [
             state
             for state in self.hass.states.async_all("binary_sensor")
-            if state.attributes.get("device_class") == "motion"
+            if state.attributes.get("device_class") in SUPPORTED_DEVICE_CLASSES
         ]
         new_entities: list[MotionOccupancySensor] = []
         for state in motion_states:
