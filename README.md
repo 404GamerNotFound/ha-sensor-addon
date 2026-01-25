@@ -1,0 +1,2 @@
+# ha-sensor-addon
+
