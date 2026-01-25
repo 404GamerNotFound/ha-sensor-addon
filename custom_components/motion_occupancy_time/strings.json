@@ -4,7 +4,7 @@
     "step": {
       "user": {
         "title": "Motion Occupancy Time",
-        "description": "Creates a total occupancy time sensor for each motion binary sensor."
+        "description": "Creates occupancy duration and activation count sensors for each motion/occupancy binary sensor."
       }
     }
   }
