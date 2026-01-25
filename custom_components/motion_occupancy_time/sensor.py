@@ -211,14 +211,24 @@ class MotionOccupancySensor(SensorEntity):
         state = self._store.states.get(self._source_entity_id)
         if not state:
             return 0.0
-        return round(state.total_seconds, 2)
+        if state.last_on:
+            ongoing = (dt_util.utcnow() - state.last_on).total_seconds()
+        else:
+            ongoing = 0.0
+        return round(state.total_seconds + ongoing, 2)
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         state = self._store.states.get(self._source_entity_id)
         if not state:
             return {}
+        current_duration = None
+        if state.last_on:
+            current_duration = round(
+                (dt_util.utcnow() - state.last_on).total_seconds(), 2
+            )
         return {
+            "current_occupancy_seconds": current_duration,
             "last_on": state.last_on.isoformat() if state.last_on else None,
             "source_entity_id": self._source_entity_id,
         }
