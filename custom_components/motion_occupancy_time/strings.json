@@ -1,0 +1,11 @@
+{
+  "title": "Motion Occupancy Time",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Motion Occupancy Time",
+        "description": "Creates a total occupancy time sensor for each motion binary sensor."
+      }
+    }
+  }
+}
