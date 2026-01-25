@@ -115,7 +115,7 @@ class MotionOccupancyManager:
             entity_id = state.entity_id
             if entity_id not in self._entities:
                 device_info = self._device_info_for_entity(
-                    entity_registry, device_registry, entity_id
+                    entity_registry, device_registry, entity_id, state
                 )
                 sensor = MotionOccupancySensor(entity_id, state, self._store, device_info)
                 self._entities[entity_id] = sensor
@@ -127,16 +127,26 @@ class MotionOccupancyManager:
         self._update_state_listener(set(self._entities))
 
     @staticmethod
-    def _device_info_for_entity(entity_registry, device_registry, entity_id: str) -> DeviceInfo | None:
+    def _device_info_for_entity(
+        entity_registry,
+        device_registry,
+        entity_id: str,
+        state: State,
+    ) -> DeviceInfo:
         entry = entity_registry.async_get(entity_id)
-        if not entry or not entry.device_id:
-            return None
-        device = device_registry.async_get(entry.device_id)
-        if not device:
-            return None
-        if not device.identifiers:
-            return None
-        return DeviceInfo(identifiers=device.identifiers)
+        if entry and entry.device_id:
+            device = device_registry.async_get(entry.device_id)
+            if device and (device.identifiers or device.connections):
+                return DeviceInfo(
+                    identifiers=device.identifiers or None,
+                    connections=device.connections or None,
+                )
+        return DeviceInfo(
+            identifiers={(DOMAIN, entity_id)},
+            name=state.attributes.get("friendly_name", entity_id),
+            manufacturer="Motion Occupancy Time",
+            model="Virtual Motion Sensor",
+        )
 
     def _update_state_listener(self, entity_ids: set[str]) -> None:
         if entity_ids == self._tracked_entity_ids:
@@ -204,7 +214,7 @@ class MotionOccupancySensor(SensorEntity):
         source_entity_id: str,
         source_state: State,
         store: MotionOccupancyStore,
-        device_info: DeviceInfo | None,
+        device_info: DeviceInfo,
     ) -> None:
         self._source_entity_id = source_entity_id
         self._source_name = source_state.attributes.get("friendly_name", source_entity_id)
