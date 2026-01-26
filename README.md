@@ -4,7 +4,7 @@ This repository provides a Home Assistant custom integration that adds occupancy
 
 ## Features
 
-- Creates new sensor entities for every `binary_sensor` with `device_class: motion` or `occupancy`.
+- Creates new sensor entities for every `binary_sensor` with `device_class: motion`, `occupancy`, or `presence`.
 - Attaches the new sensor to the same device as the original motion entity.
 - Persists the total occupied time and activation counts across restarts.
 - No MQTT required; everything runs directly inside Home Assistant.
