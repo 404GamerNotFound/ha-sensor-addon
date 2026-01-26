@@ -131,13 +131,15 @@ class MotionOccupancyManager:
             if state.attributes.get("device_class") in SUPPORTED_DEVICE_CLASSES
         ]
         new_entities: list[MotionOccupancyBaseSensor] = []
+        pending_links: list[tuple[str, MotionOccupancyBaseSensor]] = []
         source_entity_ids: set[str] = set()
         for state in motion_states:
             entity_id = state.entity_id
             source_entity_ids.add(entity_id)
+            source_entry = entity_registry.async_get(entity_id)
             if entity_id not in self._entities:
                 device_info = self._device_info_for_entity(
-                    entity_registry, device_registry, entity_id, state
+                    device_registry, entity_id, state, source_entry
                 )
                 total_sensor = MotionOccupancyTotalSensor(
                     entity_id, state, self._store, device_info
@@ -148,21 +150,29 @@ class MotionOccupancyManager:
                 self._entities[entity_id] = total_sensor
                 self._entities[f"{entity_id}_count"] = count_sensor
                 new_entities.extend([total_sensor, count_sensor])
+            total_sensor = self._entities.get(entity_id)
+            count_sensor = self._entities.get(f"{entity_id}_count")
+            if source_entry and source_entry.device_id:
+                if total_sensor:
+                    pending_links.append((source_entry.device_id, total_sensor))
+                if count_sensor:
+                    pending_links.append((source_entry.device_id, count_sensor))
             self._sync_state(entity_id, state)
         if new_entities:
             self._async_add_entities(new_entities)
+        if pending_links:
+            self._ensure_entity_device_links(entity_registry, pending_links)
         self._store.async_schedule_save()
         self._source_entity_ids = source_entity_ids
         self._update_state_listener(self._source_entity_ids)
 
     @staticmethod
     def _device_info_for_entity(
-        entity_registry,
         device_registry,
         entity_id: str,
         state: State,
+        entry,
     ) -> DeviceInfo:
-        entry = entity_registry.async_get(entity_id)
         if entry and entry.device_id:
             device = device_registry.async_get(entry.device_id)
             if device and (device.identifiers or device.connections):
@@ -176,6 +186,20 @@ class MotionOccupancyManager:
             manufacturer="Motion Occupancy Time",
             model="Virtual Motion Sensor",
         )
+
+    @staticmethod
+    def _ensure_entity_device_links(
+        entity_registry,
+        pending_links: list[tuple[str, MotionOccupancyBaseSensor]],
+    ) -> None:
+        for device_id, entity in pending_links:
+            if not entity.entity_id:
+                continue
+            entry = entity_registry.async_get(entity.entity_id)
+            if entry and entry.device_id != device_id:
+                entity_registry.async_update_entity(
+                    entity.entity_id, device_id=device_id
+                )
 
     def _update_state_listener(self, entity_ids: set[str]) -> None:
         if entity_ids == self._tracked_entity_ids:
