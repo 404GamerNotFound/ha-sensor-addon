@@ -125,18 +125,18 @@ class MotionOccupancyManager:
     async def _refresh_entities(self) -> None:
         entity_registry = async_get_entity_registry(self.hass)
         device_registry = async_get_device_registry(self.hass)
-        motion_states = [
-            state
-            for state in self.hass.states.async_all("binary_sensor")
-            if state.attributes.get("device_class") in SUPPORTED_DEVICE_CLASSES
-        ]
         new_entities: list[MotionOccupancyBaseSensor] = []
         pending_links: list[tuple[str, MotionOccupancyBaseSensor]] = []
         source_entity_ids: set[str] = set()
-        for state in motion_states:
+        for state in self.hass.states.async_all("binary_sensor"):
             entity_id = state.entity_id
-            source_entity_ids.add(entity_id)
             source_entry = entity_registry.async_get(entity_id)
+            device_class = state.attributes.get("device_class") or (
+                source_entry.device_class if source_entry else None
+            )
+            if device_class not in SUPPORTED_DEVICE_CLASSES:
+                continue
+            source_entity_ids.add(entity_id)
             if entity_id not in self._entities:
                 device_info = self._device_info_for_entity(
                     device_registry, entity_id, state, source_entry
