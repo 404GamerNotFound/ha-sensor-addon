@@ -1,6 +1,7 @@
 {
   "name": "Motion Occupancy Time",
   "content_in_root": false,
+  "zip_release": true,
   "render_readme": true,
   "domains": ["motion_occupancy_time"]
 }
