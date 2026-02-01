@@ -255,16 +255,20 @@ async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
-) -> None:
+) -> bool:
     manager = MotionOccupancyManager(hass, async_add_entities)
     hass.data[DOMAIN][entry.entry_id]["manager"] = manager
     await manager.async_initialize()
+    return True
 
 
-async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    manager: MotionOccupancyManager | None = hass.data[DOMAIN][entry.entry_id].get("manager")
+async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    manager: MotionOccupancyManager | None = hass.data[DOMAIN][entry.entry_id].get(
+        "manager"
+    )
     if manager:
         await manager.async_unload()
+    return True
 
 
 class MotionOccupancyBaseSensor(SensorEntity):
